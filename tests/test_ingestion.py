@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import MagicMock
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
 
@@ -9,20 +10,18 @@ from src.ingestion.autoloader_ingest import configure_autoloader, _default_glob
 from src.ingestion.schema_inference import _compare_schemas
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def spark():
-    return (
-        SparkSession.builder
-        .master("local[2]")
-        .appName("test-ingestion")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    return SparkSession.builder \
+        .master("local[*]") \
+        .appName("unit-tests") \
+        .config("spark.sql.shuffle.partitions", "1") \
         .getOrCreate()
-    )
 
 
 class TestAutoLoaderConfig:
-    def test_configure_autoloader_returns_reader(self, spark, tmp_path):
+    def test_configure_autoloader_returns_reader(self, tmp_path):
+        spark = MagicMock()
         schema_loc = str(tmp_path / "schema")
         source_path = str(tmp_path / "source")
         (tmp_path / "source").mkdir()

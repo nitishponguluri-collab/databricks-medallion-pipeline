@@ -14,16 +14,13 @@ from src.transformation.silver_cleansing import (
 )
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def spark():
-    return (
-        SparkSession.builder
-        .master("local[2]")
-        .appName("test-transformation")
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    return SparkSession.builder \
+        .master("local[*]") \
+        .appName("unit-tests") \
+        .config("spark.sql.shuffle.partitions", "1") \
         .getOrCreate()
-    )
 
 
 class TestTrimWhitespace:

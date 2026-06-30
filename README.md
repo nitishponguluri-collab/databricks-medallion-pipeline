@@ -8,7 +8,7 @@ Production-grade data pipeline implementing the **medallion (bronze → silver �
 
 Raw data arriving from transactional systems, SaaS APIs, and event streams is inherently dirty: schema drift, late-arriving records, duplicates, and null critical fields. Without a governed transformation layer this raw data cannot be safely consumed by BI tools, ML models, or downstream applications.
 
-This pipeline solves that by progressively refining raw files through three Delta Lake layers — each with explicit quality guarantees — while Unity Catalog enforces fine-grained access control across all consumers.
+This pipeline solves that by progressively refining raw files through three Delta Lake layers, each with explicit quality guarantees, while Unity Catalog enforces fine-grained access control across all consumers.
 
 ---
 

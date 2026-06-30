@@ -1,0 +1,237 @@
+name: Deploy Medallion Pipeline to Databricks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.11"
+  DATABRICKS_CLI_VERSION: "0.220.0"
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Lint & Unit Tests
+  # -----------------------------------------------------------------------
+  test:
+    name: Lint & Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate YAML configs
+        run: |
+          python -c "
+          import yaml, glob, sys
+          errors = []
+          for f in glob.glob('config/*.yaml') + glob.glob('config/*.yml'):
+              try:
+                  yaml.safe_load(open(f))
+                  print(f'OK: {f}')
+              except yaml.YAMLError as e:
+                  errors.append(f'{f}: {e}')
+          if errors:
+              print('\n'.join(errors), file=sys.stderr)
+              sys.exit(1)
+          "
+
+      - name: Validate JSON configs
+        run: |
+          python -c "
+          import json, glob, sys
+          errors = []
+          for f in glob.glob('**/*.json', recursive=True):
+              try:
+                  json.load(open(f))
+                  print(f'OK: {f}')
+              except json.JSONDecodeError as e:
+                  errors.append(f'{f}: {e}')
+          if errors:
+              print('\n'.join(errors), file=sys.stderr)
+              sys.exit(1)
+          "
+
+      - name: Run unit tests
+        run: |
+          pytest tests/ -v --tb=short --junitxml=test-results.xml
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results.xml
+
+  # -----------------------------------------------------------------------
+  # Deploy to Dev (on PR)
+  # -----------------------------------------------------------------------
+  deploy-dev:
+    name: Deploy to Dev Workspace
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'pull_request'
+    environment: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Databricks CLI
+        run: |
+          pip install databricks-cli==${{ env.DATABRICKS_CLI_VERSION }}
+
+      - name: Configure Databricks CLI
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+        run: |
+          databricks configure --token <<EOF
+          $DATABRICKS_HOST
+          $DATABRICKS_TOKEN
+          EOF
+
+      - name: Deploy notebooks to dev workspace
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+        run: |
+          databricks workspace import-dir notebooks /Workspace/Repos/medallion-pipeline/notebooks \
+            --overwrite --format SOURCE
+
+      - name: Deploy job config (dev)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+        run: |
+          # Substitute {{env}} placeholder with dev
+          sed 's/{{env}}/dev/g' jobs/databricks_job_config.json > /tmp/job_config_dev.json
+
+          JOB_ID=$(databricks jobs list --output JSON | \
+            python -c "import json,sys; jobs=json.load(sys.stdin).get('jobs',[]); \
+              match=[j['job_id'] for j in jobs if j['settings']['name']=='medallion-pipeline-dev']; \
+              print(match[0] if match else '')")
+
+          if [ -z "$JOB_ID" ]; then
+            echo "Creating new job: medallion-pipeline-dev"
+            databricks jobs create --json-file /tmp/job_config_dev.json
+          else
+            echo "Updating existing job: $JOB_ID"
+            databricks jobs reset --job-id "$JOB_ID" --json-file /tmp/job_config_dev.json
+          fi
+
+      - name: Smoke test — run bronze notebook on dev
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_DEV }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_DEV }}
+        run: |
+          RUN_ID=$(databricks runs submit \
+            --json '{
+              "run_name": "smoke-test-bronze-dev",
+              "existing_cluster_id": "${{ secrets.DATABRICKS_CLUSTER_ID_DEV }}",
+              "notebook_task": {
+                "notebook_path": "/Workspace/Repos/medallion-pipeline/notebooks/01_bronze_ingestion",
+                "base_parameters": {"env": "dev", "source_name": "orders"}
+              }
+            }' | python -c "import json,sys; print(json.load(sys.stdin)['run_id'])")
+
+          echo "Smoke test run_id: $RUN_ID"
+
+          # Poll until complete (max 10 min)
+          for i in $(seq 1 30); do
+            STATE=$(databricks runs get --run-id "$RUN_ID" | \
+              python -c "import json,sys; d=json.load(sys.stdin); print(d['state']['life_cycle_state'])")
+            echo "Run state: $STATE"
+            if [ "$STATE" = "TERMINATED" ]; then
+              RESULT=$(databricks runs get --run-id "$RUN_ID" | \
+                python -c "import json,sys; d=json.load(sys.stdin); print(d['state']['result_state'])")
+              echo "Result: $RESULT"
+              [ "$RESULT" = "SUCCESS" ] && exit 0 || exit 1
+            fi
+            sleep 20
+          done
+          echo "Timeout waiting for smoke test"
+          exit 1
+
+  # -----------------------------------------------------------------------
+  # Deploy to Production (on push to main)
+  # -----------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to Production Workspace
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: prod
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Databricks CLI
+        run: pip install databricks-cli==${{ env.DATABRICKS_CLI_VERSION }}
+
+      - name: Configure Databricks CLI (prod)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_PROD }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+        run: |
+          databricks configure --token <<EOF
+          $DATABRICKS_HOST
+          $DATABRICKS_TOKEN
+          EOF
+
+      - name: Deploy notebooks to prod workspace
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_PROD }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+        run: |
+          databricks workspace import-dir notebooks /Workspace/Repos/medallion-pipeline/notebooks \
+            --overwrite --format SOURCE
+
+      - name: Deploy job config (prod)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST_PROD }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN_PROD }}
+        run: |
+          sed 's/{{env}}/prod/g' jobs/databricks_job_config.json > /tmp/job_config_prod.json
+
+          JOB_ID=$(databricks jobs list --output JSON | \
+            python -c "import json,sys; jobs=json.load(sys.stdin).get('jobs',[]); \
+              match=[j['job_id'] for j in jobs if j['settings']['name']=='medallion-pipeline-prod']; \
+              print(match[0] if match else '')")
+
+          if [ -z "$JOB_ID" ]; then
+            echo "Creating new prod job"
+            databricks jobs create --json-file /tmp/job_config_prod.json
+          else
+            echo "Updating existing prod job: $JOB_ID"
+            databricks jobs reset --job-id "$JOB_ID" --json-file /tmp/job_config_prod.json
+          fi
+
+      - name: Notify deployment success
+        if: success()
+        run: |
+          echo "Medallion pipeline deployed to prod successfully from commit ${{ github.sha }}"

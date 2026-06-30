@@ -1,0 +1,132 @@
+pipeline:
+  name: medallion-pipeline
+  version: "1.0"
+
+environments:
+  dev:
+    catalog: medallion_dev
+    schemas:
+      bronze: bronze
+      silver: silver
+      gold: gold
+    cluster:
+      bronze_layer:
+        node_type: Standard_DS3_v2
+        min_workers: 1
+        max_workers: 4
+        spot_instance: true
+      silver_layer:
+        node_type: Standard_DS4_v2
+        min_workers: 2
+        max_workers: 8
+        spot_instance: true
+      gold_layer:
+        node_type: Standard_DS4_v2
+        min_workers: 2
+        max_workers: 6
+        spot_instance: false
+
+  staging:
+    catalog: medallion_staging
+    schemas:
+      bronze: bronze
+      silver: silver
+      gold: gold
+    cluster:
+      bronze_layer:
+        node_type: Standard_DS4_v2
+        min_workers: 2
+        max_workers: 8
+        spot_instance: true
+      silver_layer:
+        node_type: Standard_DS5_v2
+        min_workers: 4
+        max_workers: 12
+        spot_instance: true
+      gold_layer:
+        node_type: Standard_DS5_v2
+        min_workers: 4
+        max_workers: 10
+        spot_instance: false
+
+  prod:
+    catalog: medallion_prod
+    schemas:
+      bronze: bronze
+      silver: silver
+      gold: gold
+    cluster:
+      bronze_layer:
+        node_type: Standard_DS5_v2
+        min_workers: 4
+        max_workers: 16
+        spot_instance: true
+      silver_layer:
+        node_type: Standard_DS5_v2
+        min_workers: 4
+        max_workers: 20
+        spot_instance: false
+      gold_layer:
+        node_type: Standard_E8ds_v4
+        min_workers: 4
+        max_workers: 12
+        spot_instance: false
+
+bronze:
+  sources:
+    - name: orders
+      path: abfss://raw@storageaccount.dfs.core.windows.net/orders/
+      format: json
+      schema_location: abfss://checkpoints@storageaccount.dfs.core.windows.net/schemas/orders/
+      checkpoint_location: abfss://checkpoints@storageaccount.dfs.core.windows.net/bronze/orders/
+    - name: customers
+      path: abfss://raw@storageaccount.dfs.core.windows.net/customers/
+      format: csv
+      schema_location: abfss://checkpoints@storageaccount.dfs.core.windows.net/schemas/customers/
+      checkpoint_location: abfss://checkpoints@storageaccount.dfs.core.windows.net/bronze/customers/
+    - name: products
+      path: s3://your-bucket/raw/products/
+      format: parquet
+      schema_location: s3://your-bucket/checkpoints/schemas/products/
+      checkpoint_location: s3://your-bucket/checkpoints/bronze/products/
+
+silver:
+  transformations:
+    orders:
+      business_keys: [order_id]
+      dedup_key: [order_id, updated_at]
+      null_strategies:
+        customer_id: fail
+        order_amount: default:0.0
+        order_status: default:UNKNOWN
+      date_columns: [order_date, updated_at]
+      trim_columns: [customer_name, product_sku]
+    customers:
+      business_keys: [customer_id]
+      dedup_key: [customer_id, record_date]
+      null_strategies:
+        email: fail
+        phone: allow
+      date_columns: [signup_date, last_purchase_date]
+
+gold:
+  aggregations:
+    - name: daily_sales_summary
+      source_table: silver.orders
+      group_by: [order_date, product_category, region]
+      metrics:
+        - total_revenue: sum(order_amount)
+        - order_count: count(order_id)
+        - avg_order_value: avg(order_amount)
+      partition_by: [order_date]
+      zorder_by: [product_category, region]
+    - name: customer_360
+      source_tables: [silver.customers, silver.orders]
+      join_key: customer_id
+      partition_by: [signup_year]
+      zorder_by: [customer_id]
+
+monitoring:
+  metrics_table: medallion_prod.monitoring.pipeline_metrics
+  alert_email: data-platform@company.com
+  slack_webhook_secret: slack-webhook-secret-name

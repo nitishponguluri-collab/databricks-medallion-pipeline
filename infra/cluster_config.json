@@ -1,0 +1,43 @@
+{
+  "cluster_name": "medallion-interactive-dev",
+  "spark_version": "14.3.x-photon-scala2.12",
+  "node_type_id": "Standard_DS4_v2",
+  "driver_node_type_id": "Standard_DS4_v2",
+  "autoscale": {
+    "min_workers": 1,
+    "max_workers": 8
+  },
+  "autotermination_minutes": 60,
+  "enable_elastic_disk": true,
+  "azure_attributes": {
+    "first_on_demand": 1,
+    "availability": "SPOT_WITH_FALLBACK_AZURE",
+    "spot_bid_max_price": -1
+  },
+  "spark_conf": {
+    "spark.databricks.delta.preview.enabled": "true",
+    "spark.databricks.delta.autoOptimize.optimizeWrite": "true",
+    "spark.databricks.delta.autoOptimize.autoCompact": "true",
+    "spark.databricks.delta.merge.enableLowShuffle": "true",
+    "spark.sql.adaptive.enabled": "true",
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+  },
+  "spark_env_vars": {
+    "PYSPARK_PYTHON": "/databricks/python3/bin/python3"
+  },
+  "custom_tags": {
+    "team": "data-platform",
+    "pipeline": "medallion",
+    "cost-center": "analytics",
+    "environment": "dev"
+  },
+  "init_scripts": [],
+  "libraries": [
+    {"pypi": {"package": "loguru==0.7.2"}},
+    {"pypi": {"package": "great-expectations==0.18.8"}},
+    {"pypi": {"package": "pyyaml==6.0.1"}}
+  ],
+  "runtime_engine": "PHOTON",
+  "data_security_mode": "SINGLE_USER",
+  "single_user_name": "{{user_email}}"
+}

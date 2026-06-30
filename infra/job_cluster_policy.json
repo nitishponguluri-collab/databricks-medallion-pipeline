@@ -1,0 +1,91 @@
+{
+  "name": "medallion-pipeline-policy",
+  "description": "Cluster policy enforcing instance limits, spot usage, Photon, and cost-allocation tags for all medallion pipeline job clusters.",
+  "definition": {
+    "spark_version": {
+      "type": "regex",
+      "pattern": "14\\.[0-9]+\\.x-(photon-)?scala2\\.12",
+      "defaultValue": "14.3.x-photon-scala2.12",
+      "isOptional": false
+    },
+    "node_type_id": {
+      "type": "allowlist",
+      "values": [
+        "Standard_DS3_v2",
+        "Standard_DS4_v2",
+        "Standard_DS5_v2",
+        "Standard_E8ds_v4",
+        "Standard_E16ds_v4"
+      ],
+      "defaultValue": "Standard_DS4_v2"
+    },
+    "driver_node_type_id": {
+      "type": "allowlist",
+      "values": [
+        "Standard_DS3_v2",
+        "Standard_DS4_v2",
+        "Standard_DS5_v2"
+      ],
+      "defaultValue": "Standard_DS4_v2"
+    },
+    "autoscale.min_workers": {
+      "type": "range",
+      "minValue": 1,
+      "maxValue": 4,
+      "defaultValue": 2
+    },
+    "autoscale.max_workers": {
+      "type": "range",
+      "minValue": 2,
+      "maxValue": 20,
+      "defaultValue": 8
+    },
+    "azure_attributes.availability": {
+      "type": "allowlist",
+      "values": ["SPOT_WITH_FALLBACK_AZURE", "ON_DEMAND_AZURE"],
+      "defaultValue": "SPOT_WITH_FALLBACK_AZURE"
+    },
+    "azure_attributes.spot_bid_max_price": {
+      "type": "fixed",
+      "value": -1,
+      "hidden": false
+    },
+    "autotermination_minutes": {
+      "type": "range",
+      "minValue": 10,
+      "maxValue": 120,
+      "defaultValue": 30
+    },
+    "runtime_engine": {
+      "type": "fixed",
+      "value": "PHOTON",
+      "hidden": false
+    },
+    "data_security_mode": {
+      "type": "allowlist",
+      "values": ["SINGLE_USER", "USER_ISOLATION"],
+      "defaultValue": "SINGLE_USER"
+    },
+    "custom_tags.pipeline": {
+      "type": "fixed",
+      "value": "medallion"
+    },
+    "custom_tags.team": {
+      "type": "fixed",
+      "value": "data-platform"
+    },
+    "custom_tags.cost-center": {
+      "type": "allowlist",
+      "values": ["analytics", "data-engineering", "finance"],
+      "isOptional": false
+    },
+    "spark_conf.spark.databricks.delta.autoOptimize.optimizeWrite": {
+      "type": "fixed",
+      "value": "true"
+    },
+    "spark_conf.spark.databricks.delta.autoOptimize.autoCompact": {
+      "type": "fixed",
+      "value": "true"
+    }
+  }
+}

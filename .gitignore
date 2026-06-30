@@ -1,0 +1,10 @@
+.env
+*.ipynb_checkpoints/
+__pycache__/
+*.py[cod]
+.databricks/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+*.log

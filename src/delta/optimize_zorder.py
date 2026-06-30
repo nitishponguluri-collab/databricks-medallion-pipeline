@@ -4,7 +4,7 @@ import time
 from pyspark.sql import SparkSession
 from loguru import logger
 
-from delta.delta_utils import table_size_metrics
+from src.delta.delta_utils import table_size_metrics
 
 
 def optimize_table(
